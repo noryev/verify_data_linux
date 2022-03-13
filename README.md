@@ -1,4 +1,4 @@
-##Verify Data on Linux using IPFS and IPNS
+## Verify Data on Linux using IPFS and IPNS
 
 This is a small application to save and verify data using IPFS and IPNS to prove that the data is authentic. 
 

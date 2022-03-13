@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: deepak1556 <hop2deep@gmail.com>
+Date: Tue, 17 Aug 2021 22:42:42 -0700
+Subject: feat: expose raw response headers from URLLoader
+
+With https://chromium-review.googlesource.com/c/chromium/src/+/2856099
+unfiltered response headers are only available via trusted channel
+through //services/network/public/mojom/devtools_observer.mojom.
+https://github.com/electron/electron/pull/30503/commits/28f4da1582d046e96cb58f3cbb590503e89dfd0d
+was an attempt to use this interface but given the original response is
+signalled on a different interface via URLLoaderClient::OnReceiveResponse
+it is harder to sync these data from two different channels for a synchronous
+event emitted on the SimpleURLLoaderWrapper::OnResponseStarted.
+
+This patch does the minimal approach to add back the raw response
+headers, moving forward we should find a way in upstream to provide
+access to these headers for loader clients created on the browser process.
+
+diff --git a/services/network/public/cpp/resource_request.cc b/services/network/public/cpp/resource_request.cc
+index 87868727a78223baef9ffd2591f49fced240ef4e..f6a6ff28f33e2d1c065f2abeb96733b2d28a6ea1 100644
+--- a/services/network/public/cpp/resource_request.cc
++++ b/services/network/public/cpp/resource_request.cc
+@@ -233,6 +233,7 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
+          do_not_prompt_for_login == request.do_not_prompt_for_login &&
+          is_main_frame == request.is_main_frame &&
+          transition_type == request.transition_type &&
++         report_raw_headers == request.report_raw_headers &&
+          previews_state == request.previews_state &&
+          upgrade_if_insecure == request.upgrade_if_insecure &&
+          is_revalidating == request.is_revalidating &&
+diff --git a/services/network/public/cpp/resource_request.h b/services/network/public/cpp/resource_request.h
+index 8b9a7b36f53a4cfcd159ac18c06d1724072013c8..ef0191bae8a07e531ae129cf32b22f4930c5e266 100644
+--- a/services/network/public/cpp/resource_request.h
++++ b/services/network/public/cpp/resource_request.h
+@@ -156,6 +156,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
+   bool do_not_prompt_for_login = false;
+   bool is_main_frame = false;
+   int transition_type = 0;
++  bool report_raw_headers = false;
+   int previews_state = 0;
+   bool upgrade_if_insecure = false;
+   bool is_revalidating = false;
+diff --git a/services/network/public/cpp/url_request_mojom_traits.cc b/services/network/public/cpp/url_request_mojom_traits.cc
+index 1fcf54cac11c38352e14774cd08bcaa162443e9c..5356da11391d52a8f9aaa57a27616cee6dc0f2b6 100644
+--- a/services/network/public/cpp/url_request_mojom_traits.cc
++++ b/services/network/public/cpp/url_request_mojom_traits.cc
+@@ -209,6 +209,7 @@ bool StructTraits<
+   out->do_not_prompt_for_login = data.do_not_prompt_for_login();
+   out->is_main_frame = data.is_main_frame();
+   out->transition_type = data.transition_type();
++  out->report_raw_headers = data.report_raw_headers();
+   out->previews_state = data.previews_state();
+   out->upgrade_if_insecure = data.upgrade_if_insecure();
+   out->is_revalidating = data.is_revalidating();
+diff --git a/services/network/public/cpp/url_request_mojom_traits.h b/services/network/public/cpp/url_request_mojom_traits.h
+index 1b8dbc0538d0af843e40edc41505d08f9034f97b..270822eb756090f8a74f34823009942ed21e8616 100644
+--- a/services/network/public/cpp/url_request_mojom_traits.h
++++ b/services/network/public/cpp/url_request_mojom_traits.h
+@@ -269,6 +269,9 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
+   static int32_t transition_type(const network::ResourceRequest& request) {
+     return request.transition_type;
+   }
++  static bool report_raw_headers(const network::ResourceRequest& request) {
++    return request.report_raw_headers;
++  }
+   static int32_t previews_state(const network::ResourceRequest& request) {
+     return request.previews_state;
+   }
+diff --git a/services/network/public/mojom/url_request.mojom b/services/network/public/mojom/url_request.mojom
+index 79b5d03ded03ced9e6ff4d17d10935004bfb0062..923883fd010f9621c790dd5381a7e1f0cb36e740 100644
+--- a/services/network/public/mojom/url_request.mojom
++++ b/services/network/public/mojom/url_request.mojom
+@@ -312,6 +312,9 @@ struct URLRequest {
+   // about this.
+   int32 transition_type;
+ 
++  // Whether to provide unfiltered response headers.
++  bool report_raw_headers;
++
+   // Whether or not to request a Preview version of the resource or let the
+   // browser decide.
+   // Note: this is an enum of type PreviewsState.
+diff --git a/services/network/public/mojom/url_response_head.mojom b/services/network/public/mojom/url_response_head.mojom
+index 4c4cc16db82d7434573f7740855fbe72d68815e6..f71290800b6bb51a39b1f86be36f02d602ac3397 100644
+--- a/services/network/public/mojom/url_response_head.mojom
++++ b/services/network/public/mojom/url_response_head.mojom
+@@ -8,6 +8,7 @@ import "mojo/public/mojom/base/time.mojom";
+ import "mojo/public/mojom/base/unguessable_token.mojom";
+ import "services/network/public/mojom/fetch_api.mojom";
+ import "services/network/public/mojom/ip_address_space.mojom";
++import "services/network/public/mojom/http_raw_headers.mojom";
+ import "services/network/public/mojom/ip_endpoint.mojom";
+ import "services/network/public/mojom/load_timing_info.mojom";
+ import "services/network/public/mojom/network_param.mojom";
+@@ -29,6 +30,9 @@ struct URLResponseHead {
+   // The response headers or NULL if the URL type does not support headers.
+   HttpResponseHeaders headers;
+ 
++  // Actual response headers, as obtained from the network stack.
++  array<HttpRawHeaderPair> raw_response_headers;
++
+   // The mime type of the response.  This may be a derived value.
+   string mime_type;
+ 
+diff --git a/services/network/url_loader.cc b/services/network/url_loader.cc
+index 5c5aeeda64b244ab1f58556f28d2ca3c133d03a8..2f9aa4d49693a22507f668b2738c54be59802b8f 100644
+--- a/services/network/url_loader.cc
++++ b/services/network/url_loader.cc
+@@ -469,6 +469,7 @@ URLLoader::URLLoader(
+                                   mojo::SimpleWatcher::ArmingPolicy::MANUAL,
+                                   base::SequencedTaskRunnerHandle::Get()),
+       per_factory_corb_state_(context.GetMutableCorbState()),
++      report_raw_headers_(request.report_raw_headers),
+       devtools_request_id_(request.devtools_request_id),
+       request_mode_(request.mode),
+       request_credentials_mode_(request.credentials_mode),
+@@ -636,7 +637,7 @@ URLLoader::URLLoader(
+   url_request_->SetRequestHeadersCallback(base::BindRepeating(
+       &URLLoader::SetRawRequestHeadersAndNotify, base::Unretained(this)));
+ 
+-  if (devtools_request_id()) {
++  if (devtools_request_id() || report_raw_headers_) {
+     url_request_->SetResponseHeadersCallback(base::BindRepeating(
+         &URLLoader::SetRawResponseHeaders, base::Unretained(this)));
+   }
+@@ -1395,6 +1396,19 @@ void URLLoader::OnResponseStarted(net::URLRequest* url_request, int net_error) {
+   }
+ 
+   response_ = BuildResponseHead();
++  if (raw_response_headers_ && report_raw_headers_) {
++    std::vector<network::mojom::HttpRawHeaderPairPtr> header_array;
++    size_t iterator = 0;
++    std::string name, value;
++    while (raw_response_headers_->EnumerateHeaderLines(&iterator, &name, &value)) {
++      network::mojom::HttpRawHeaderPairPtr pair =
++          network::mojom::HttpRawHeaderPair::New();
++      pair->key = name;
++      pair->value = value;
++      header_array.push_back(std::move(pair));
++    }
++    response_->raw_response_headers = std::move(header_array);
++  }
+   DispatchOnRawResponse();
+ 
+   // Parse and remove the Trust Tokens response headers, if any are expected,
+diff --git a/services/network/url_loader.h b/services/network/url_loader.h
+index 98fe2512671e43a4e0da6e9b9ff714d7204fc3a8..bf8751c1b37a678f73ec8e11c86e1eb1287443e4 100644
+--- a/services/network/url_loader.h
++++ b/services/network/url_loader.h
+@@ -506,6 +506,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
+   std::unique_ptr<ResourceScheduler::ScheduledResourceRequest>
+       resource_scheduler_request_handle_;
+ 
++  // Whether client requested raw headers.
++  bool report_raw_headers_ = false;
+   bool enable_reporting_raw_headers_ = false;
+   bool seen_raw_request_headers_ = false;
+   scoped_refptr<const net::HttpResponseHeaders> raw_response_headers_;

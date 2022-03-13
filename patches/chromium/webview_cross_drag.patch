@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anonymous <anonymous@electronjs.org>
+Date: Thu, 20 Sep 2018 17:47:04 -0700
+Subject: webview_cross_drag.patch
+
+This allows dragging and dropping between <webview>s.
+
+Originally landed in https://github.com/electron/libchromiumcontent/pull/267
+
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index eff6616ef019ea8b661b878cc5fccd1e4b9217aa..9aff1848395dc41311df575dd7cbf0771271ed03 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -890,10 +890,7 @@ bool WebContentsViewAura::IsValidDragTarget(
+   // TODO(https://crbug.com/1266953): There are some known gaps caused by
+   // comparing `RenderViewHost` IDs, as `RenderViewHost` ID is not really a
+   // strong signal for page identity.
+-  return !drag_start_ ||
+-         target_rwh->GetProcess()->GetID() == drag_start_->process_id ||
+-         GetRenderViewHostID(web_contents_->GetRenderViewHost()) !=
+-             drag_start_->view_id;
++  return true;
+ }
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+diff --git a/content/browser/web_contents/web_drag_dest_mac.mm b/content/browser/web_contents/web_drag_dest_mac.mm
+index 6455404fdccab1fffceef4b8d291c137d3a448c4..483b0b5b689da03f0d7e43576fa73275197f5a95 100644
+--- a/content/browser/web_contents/web_drag_dest_mac.mm
++++ b/content/browser/web_contents/web_drag_dest_mac.mm
+@@ -385,9 +385,7 @@ - (void)setDragStartTrackersForProcess:(int)processID {
+ }
+ 
+ - (bool)isValidDragTarget:(content::RenderWidgetHostImpl*)targetRWH {
+-  return targetRWH->GetProcess()->GetID() == _dragStartProcessID ||
+-         GetRenderViewHostID(_webContents->GetRenderViewHost()) !=
+-             _dragStartViewID;
++  return YES;
+ }
+ 
+ @end

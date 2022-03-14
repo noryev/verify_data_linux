@@ -1,6 +1,6 @@
 ## Verify Data on Linux using IPFS and IPNS
 
-This is a small application to save and verify data using IPFS and IPNS to prove that the data is authentic. 
+This is a small application to save and verify data using IPFS and IPNS to prove that the data is authentic. This application is built on Electron.
 
 A small feature to view the DAG would be a start in figuring out how to format information to our users.
 
